@@ -3,7 +3,7 @@ on:
   push:
     branches:
       - main
-      - dev
+      - release
   pull_request:
   release:
     types:
@@ -13,6 +13,44 @@ on:
 permissions: {}
 
 jobs:
+  test-macos:
+    name: Test on macOS
+    runs-on: macos-latest
+    env:
+      UV_LOCKED: true  # Assert that uv.lock is up-to-date
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      # We don't use `make install` because it requires user input
+      # Instead, we manually sync and run a subset of commands
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Install workers
+        run: uv run scripts/install/workers.sh dev
+
+      - name: Install nltk
+        run: |
+          uv run python -m nltk.downloader stopwords
+          uv run python -m nltk.downloader punkt
+          uv run python -m nltk.downloader popular
+          uv run python -m nltk.downloader universal_tagset
+
+
   test-e2e:
     name: End-to-end test
     runs-on: ubuntu-latest
@@ -145,6 +183,7 @@ jobs:
         image:
           - backend
           - database
+          - keyman
           - rabbitmq
     runs-on: ubuntu-latest
     steps:
@@ -157,7 +196,6 @@ jobs:
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
-        if: github.event_name != 'pull_request'
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
@@ -174,11 +212,10 @@ jobs:
           labels: |
             org.opencontainers.image.title=augur_${{ matrix.image}}
           images: ghcr.io/${{ github.repository_owner }}/augur_${{ matrix.image }}
-          # Pushes to the dev branch update the *:devel-latest tag
+          # Pushes to the main branch update the *:devel-latest tag
           # Releases update the *:latest tag and the *:<version> tag
-          # Main does not update any tags
           tags: |
-            type=raw,value=devel-latest,enable=${{ github.ref == 'refs/heads/dev' }}
+            type=raw,value=devel-latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=latest,enable=${{ github.event_name == 'release' }}
             type=raw,value=${{ github.event.release.tag_name }},enable=${{ github.event_name == 'release' }}
 
